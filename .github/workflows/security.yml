@@ -1,0 +1,170 @@
+# .github/workflows/security.yml
+name: Security Scan
+on:
+  push:
+    branches: [main, dev, staging]
+  pull_request:
+
+env:
+  SHIELDDEV_URL: ${{ secrets.SHIELDDEV_URL }}
+  SHIELDDEV_TOKEN: ${{ secrets.SHIELDDEV_TOKEN }}
+  PROJECT_NAME: ${{ github.repository }}
+  GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
+  APP_URL: ${{ secrets.APP_URL }}
+
+jobs:
+  # ── GitLeaks ────────────────────────────────────────────────
+  gitleaks:
+    name: GitLeaks — Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          GITLEAKS_REPORT_PATH: gitleaks-report.json
+        continue-on-error: true
+
+      - name: Upload to Shield Dev
+        if: always()
+        run: |
+          curl -sX POST $SHIELDDEV_URL/api/v1/import/gitleaks \
+            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Project: $PROJECT_NAME" \
+            -H "X-Branch: ${{ github.ref_name }}" \
+            -H "X-Commit: ${{ github.sha }}" \
+            --data-binary @gitleaks-report.json
+
+  # ── Trivy ───────────────────────────────────────────────────
+  trivy:
+    name: Trivy — Vulnerabilidades
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          format: json
+          output: trivy-report.json
+          exit-code: 0
+          ignore-unfixed: true
+
+      - name: Upload to Shield Dev
+        if: always()
+        run: |
+          curl -sX POST $SHIELDDEV_URL/api/v1/import/trivy \
+            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Project: $PROJECT_NAME" \
+            -H "X-Branch: ${{ github.ref_name }}" \
+            -H "X-Commit: ${{ github.sha }}" \
+            --data-binary @trivy-report.json
+
+  # ── OWASP Dependency Check ──────────────────────────────────
+  depcheck:
+    name: OWASP Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Dependency Check
+        uses: dependency-check/Dependency-Check_Action@v3.1.0
+        with:
+          project: ${{ github.repository }}
+          path: .
+          format: JSON
+          out: .
+        continue-on-error: true
+
+      - name: Upload to Shield Dev
+        if: always()
+        run: |
+          curl -sX POST $SHIELDDEV_URL/api/v1/import/depcheck \
+            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Project: $PROJECT_NAME" \
+            -H "X-Branch: ${{ github.ref_name }}" \
+            -H "X-Commit: ${{ github.sha }}" \
+            --data-binary @dependency-check-report.json
+
+  # ── Semgrep ─────────────────────────────────────────────────
+  semgrep:
+    name: Semgrep — SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: semgrep --config=auto --json --output=semgrep-report.json . || true
+
+      - name: Upload to Shield Dev
+        if: always()
+        run: |
+          curl -sX POST $SHIELDDEV_URL/api/v1/import/semgrep \
+            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Project: $PROJECT_NAME" \
+            -H "X-Branch: ${{ github.ref_name }}" \
+            -H "X-Commit: ${{ github.sha }}" \
+            --data-binary @semgrep-report.json
+
+  # ── Checkov ─────────────────────────────────────────────────
+  checkov:
+    name: Checkov — IaC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v3
+        with:
+          directory: .
+          output_format: json
+          output_file_path: checkov-report.json
+          soft_fail: true
+
+      - name: Upload to Shield Dev
+        if: always()
+        run: |
+          curl -sX POST $SHIELDDEV_URL/api/v1/import/checkov \
+            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Project: $PROJECT_NAME" \
+            -H "X-Branch: ${{ github.ref_name }}" \
+            -H "X-Commit: ${{ github.sha }}" \
+            --data-binary @checkov-report.json
+
+  # ── OWASP ZAP ───────────────────────────────────────────────
+  owasp-zap:
+    name: OWASP ZAP — DAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run OWASP ZAP Baseline
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ env.APP_URL }}
+          token: ${{ env.GITHUB_TOKEN }}
+          fail_action: false
+          cmd_options: '-J zap-report.json'
+
+      - name: Upload to Shield Dev
+        if: always()
+        run: |
+          curl -sX POST $SHIELDDEV_URL/api/v1/import/zap \
+            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Project: $PROJECT_NAME" \
+            -H "X-Branch: ${{ github.ref_name }}" \
+            -H "X-Commit: ${{ github.sha }}" \
+            --data-binary @zap-report.json
