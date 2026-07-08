@@ -168,8 +168,19 @@ jobs:
         with:
           directory: .
           output_format: json
-          output_file_path: checkov-report.json
+          output_file_path: checkov-output
           soft_fail: true
+
+      # --output-file-path de Checkov es una CARPETA, no un nombre de
+      # archivo: con un solo output_format guarda el reporte real adentro
+      # como results_json.json. Lo movemos para tener un archivo plano
+      # como en el resto de los jobs.
+      - name: Normalize report path
+        if: always()
+        run: |
+          if [ -f checkov-output/results_json.json ]; then
+            mv checkov-output/results_json.json checkov-report.json
+          fi
 
       - name: Verify report exists
         if: always()
