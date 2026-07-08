@@ -51,7 +51,6 @@ jobs:
         run: test -f gitleaks-report.json || { echo "::error::gitleaks-report.json no existe — revisá el step 'Run GitLeaks'"; exit 1; }
 
       - name: Upload to Shield Dev
-        if: always()
         run: |
           STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/gitleaks" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
@@ -85,7 +84,6 @@ jobs:
         run: test -f trivy-report.json || { echo "::error::trivy-report.json no existe — revisá el step 'Run Trivy'"; exit 1; }
 
       - name: Upload to Shield Dev
-        if: always()
         run: |
           STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/trivy" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
@@ -118,7 +116,6 @@ jobs:
         run: test -f dependency-check-report.json || { echo "::error::dependency-check-report.json no existe — revisá el step 'Run Dependency Check'"; exit 1; }
 
       - name: Upload to Shield Dev
-        if: always()
         run: |
           STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/depcheck" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
@@ -147,7 +144,6 @@ jobs:
         run: test -f semgrep-report.json || { echo "::error::semgrep-report.json no existe — revisá el step 'Run Semgrep'"; exit 1; }
 
       - name: Upload to Shield Dev
-        if: always()
         run: |
           STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/semgrep" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
@@ -180,7 +176,6 @@ jobs:
         run: test -f checkov-report.json || { echo "::error::checkov-report.json no existe — revisá el step 'Run Checkov'"; exit 1; }
 
       - name: Upload to Shield Dev
-        if: always()
         run: |
           STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/checkov" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
@@ -220,7 +215,6 @@ jobs:
       # de otro repo (sechub-backend), no existe acá. Corregido a la ruta
       # real que genera el step de arriba.
       - name: Upload to Shield Dev
-        if: always()
         run: |
           STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/zap" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
