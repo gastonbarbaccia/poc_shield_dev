@@ -175,11 +175,16 @@ jobs:
       # archivo: con un solo output_format guarda el reporte real adentro
       # como results_json.json. Lo movemos para tener un archivo plano
       # como en el resto de los jobs.
+      #
+      # checkov-action corre como contenedor Docker con container_user=0
+      # (root) por defecto, así que checkov-output/ queda owned por root
+      # y el usuario del runner no puede mover/borrar ahí sin sudo.
       - name: Normalize report path
         if: always()
         run: |
-          if [ -f checkov-output/results_json.json ]; then
-            mv checkov-output/results_json.json checkov-report.json
+          if sudo test -f checkov-output/results_json.json; then
+            sudo mv checkov-output/results_json.json checkov-report.json
+            sudo chown "$(id -u):$(id -g)" checkov-report.json
           fi
 
       - name: Verify report exists
