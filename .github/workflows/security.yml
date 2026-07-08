@@ -1,4 +1,19 @@
 # .github/workflows/security.yml
+#
+# Template reutilizable — escanea con 6 herramientas y sube cada reporte a
+# Shield Dev. Cada job es independiente: si tu proyecto no aplica a alguna
+# (ej: no hay Terraform para Checkov, o no hay ambiente desplegado para ZAP),
+# borrá ese job entero.
+#
+# Setup necesario (Settings → Secrets and variables → Actions):
+#   Secrets:   SHIELDDEV_URL, SHIELDDEV_TOKEN
+#   Variables: APP_URL (solo si usás el job de ZAP)
+#
+# Nota sobre GitLeaks: gitleaks/gitleaks-action@v2 NO tiene forma de
+# configurar la ruta/formato del reporte (no existe GITLEAKS_REPORT_PATH) y
+# por defecto produce SARIF, no el JSON nativo que espera Shield Dev — por
+# eso este job usa la CLI de Gitleaks directo por Docker en vez de la action.
+
 name: Security Scan
 on:
   push:
@@ -9,7 +24,6 @@ env:
   SHIELDDEV_URL: ${{ secrets.SHIELDDEV_URL }}
   SHIELDDEV_TOKEN: ${{ secrets.SHIELDDEV_TOKEN }}
   PROJECT_NAME: ${{ github.repository }}
-  GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
   APP_URL: ${{ secrets.APP_URL }}
 
 jobs:
@@ -22,23 +36,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      # gitleaks/gitleaks-action@v2 no permite pedirle JSON nativo en una
+      # ruta fija (ver nota arriba) — se corre la CLI directo para controlar
+      # formato y path con certeza.
       - name: Run GitLeaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
-          GITLEAKS_REPORT_PATH: gitleaks-report.json
         continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source /repo --no-git -v \
+            --report-format json --report-path /repo/gitleaks-report.json
+
+      - name: Verify report exists
+        if: always()
+        run: test -f gitleaks-report.json || { echo "::error::gitleaks-report.json no existe — revisá el step 'Run GitLeaks'"; exit 1; }
 
       - name: Upload to Shield Dev
         if: always()
         run: |
-          curl -sX POST $SHIELDDEV_URL/api/v1/import/gitleaks \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/gitleaks" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @gitleaks-report.json
+            --data-binary @gitleaks-report.json)
+          echo "HTTP $STATUS"; cat response.json
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS) — ver body arriba"; exit 1; }
 
   # ── Trivy ───────────────────────────────────────────────────
   trivy:
@@ -48,6 +71,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Trivy
+        continue-on-error: true
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
@@ -56,16 +80,22 @@ jobs:
           exit-code: 0
           ignore-unfixed: true
 
+      - name: Verify report exists
+        if: always()
+        run: test -f trivy-report.json || { echo "::error::trivy-report.json no existe — revisá el step 'Run Trivy'"; exit 1; }
+
       - name: Upload to Shield Dev
         if: always()
         run: |
-          curl -sX POST $SHIELDDEV_URL/api/v1/import/trivy \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/trivy" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @trivy-report.json
+            --data-binary @trivy-report.json)
+          echo "HTTP $STATUS"; cat response.json
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS) — ver body arriba"; exit 1; }
 
   # ── OWASP Dependency Check ──────────────────────────────────
   depcheck:
@@ -75,24 +105,30 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Dependency Check
+        continue-on-error: true
         uses: dependency-check/Dependency-Check_Action@v3.1.0
         with:
           project: ${{ github.repository }}
           path: .
           format: JSON
           out: .
-        continue-on-error: true
+
+      - name: Verify report exists
+        if: always()
+        run: test -f dependency-check-report.json || { echo "::error::dependency-check-report.json no existe — revisá el step 'Run Dependency Check'"; exit 1; }
 
       - name: Upload to Shield Dev
         if: always()
         run: |
-          curl -sX POST $SHIELDDEV_URL/api/v1/import/depcheck \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/depcheck" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @dependency-check-report.json
+            --data-binary @dependency-check-report.json)
+          echo "HTTP $STATUS"; cat response.json
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS) — ver body arriba"; exit 1; }
 
   # ── Semgrep ─────────────────────────────────────────────────
   semgrep:
@@ -106,16 +142,22 @@ jobs:
       - name: Run Semgrep
         run: semgrep --config=auto --json --output=semgrep-report.json . || true
 
+      - name: Verify report exists
+        if: always()
+        run: test -f semgrep-report.json || { echo "::error::semgrep-report.json no existe — revisá el step 'Run Semgrep'"; exit 1; }
+
       - name: Upload to Shield Dev
         if: always()
         run: |
-          curl -sX POST $SHIELDDEV_URL/api/v1/import/semgrep \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/semgrep" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @semgrep-report.json
+            --data-binary @semgrep-report.json)
+          echo "HTTP $STATUS"; cat response.json
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS) — ver body arriba"; exit 1; }
 
   # ── Checkov ─────────────────────────────────────────────────
   checkov:
@@ -125,6 +167,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Checkov
+        continue-on-error: true
         uses: bridgecrewio/checkov-action@v3
         with:
           directory: .
@@ -132,16 +175,22 @@ jobs:
           output_file_path: checkov-report.json
           soft_fail: true
 
+      - name: Verify report exists
+        if: always()
+        run: test -f checkov-report.json || { echo "::error::checkov-report.json no existe — revisá el step 'Run Checkov'"; exit 1; }
+
       - name: Upload to Shield Dev
         if: always()
         run: |
-          curl -sX POST $SHIELDDEV_URL/api/v1/import/checkov \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/checkov" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @checkov-report.json
+            --data-binary @checkov-report.json)
+          echo "HTTP $STATUS"; cat response.json
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS) — ver body arriba"; exit 1; }
 
   # ── OWASP ZAP ───────────────────────────────────────────────
   owasp-zap:
@@ -151,20 +200,34 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run OWASP ZAP Baseline
+        continue-on-error: true
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: ${{ env.APP_URL }}
-          token: ${{ env.GITHUB_TOKEN }}
           fail_action: false
           cmd_options: '-J zap-report.json'
 
+      - name: Verify report exists
+        if: always()
+        run: |
+          if [ ! -f zap-report.json ]; then
+            echo "::error::zap-report.json no existe — ¿APP_URL está seteada? Buscando en otras rutas:"
+            find . -name "zap-report.json" 2>/dev/null
+            exit 1
+          fi
+
+      # OJO: antes decía @frontend/samples/zap-report.json — esa ruta era
+      # de otro repo (sechub-backend), no existe acá. Corregido a la ruta
+      # real que genera el step de arriba.
       - name: Upload to Shield Dev
         if: always()
         run: |
-          curl -sX POST $SHIELDDEV_URL/api/v1/import/zap \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/zap" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @zap-report.json
+            --data-binary @zap-report.json)
+          echo "HTTP $STATUS"; cat response.json
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS) — ver body arriba"; exit 1; }
