@@ -68,6 +68,7 @@ jobs:
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
+            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
             --data-binary @gitleaks-report.json
@@ -111,6 +112,7 @@ jobs:
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
+            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
             --data-binary @trivy-report.json
@@ -149,6 +151,7 @@ jobs:
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
+            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
             --data-binary @dependency-check-report.json
@@ -185,6 +188,7 @@ jobs:
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
+            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
             --data-binary @semgrep-report.json
@@ -229,6 +233,7 @@ jobs:
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
+            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
             --data-binary @checkov-report.json
@@ -262,6 +267,7 @@ jobs:
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
+            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
             --data-binary @zap-report.json
