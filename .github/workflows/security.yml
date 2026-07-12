@@ -67,20 +67,25 @@ jobs:
 
   # ── Trivy ───────────────────────────────────────────────────
   trivy:
-    name: Trivy — Vulnerabilidades
+    name: Trivy — Vulnerabilidades (imagen)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t shielddev-image:${{ github.sha }} .
 
       - name: Run Trivy
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          scan-type: fs
+          scan-type: image
+          image-ref: shielddev-image:${{ github.sha }}
           format: json
           output: trivy-report.json
           exit-code: 0
-          ignore-unfixed: true
+          ignore-unfixed: false
+          vuln-type: os,library
 
       - name: Verify report exists
         if: always()
@@ -99,7 +104,7 @@ jobs:
             -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
             --data-binary @trivy-report.json)
           [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
-
+          
   # ── OWASP Dependency Check ──────────────────────────────────
   depcheck:
     name: OWASP Dependency Check
