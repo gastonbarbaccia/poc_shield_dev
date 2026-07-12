@@ -15,125 +15,97 @@
 # eso este job usa la CLI de Gitleaks directo por Docker en vez de la action.
 
 name: Security Scan
-
 on:
-    push:
-        branches:
-        - main
-        - dev
-        - staging
-
-    pull_request:
-
+  push:
+    branches: [main, dev, staging]
+  pull_request:
 
 env:
-    SHIELDDEV_URL: ${{ secrets.SHIELDDEV_URL }}
-    SHIELDDEV_TOKEN: ${{ secrets.SHIELDDEV_TOKEN }}
-    PROJECT_NAME: ${{ github.repository }}
-    APP_URL: ${{ secrets.APP_URL }}
-
+  SHIELDDEV_URL: ${{ secrets.SHIELDDEV_URL }}
+  SHIELDDEV_TOKEN: ${{ secrets.SHIELDDEV_TOKEN }}
+  PROJECT_NAME: ${{ github.repository }}
+  APP_URL: ${{ secrets.APP_URL }}
+  # Opcionales -- si no se mandan, Shield Dev infiere ENVIRONMENT de X-Branch
+  # y deja public_exposed en NULL (no se adivina). Ajustá según tu convención.
+  ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || (github.ref_name == 'staging' && 'staging' || 'development') }}
+  PUBLIC_EXPOSED: ${{ github.ref_name == 'main' && 'true' || 'false' }}
 
 jobs:
-
-  # ───────────────────────────────────────
-  # GitLeaks - Secrets
-  # ───────────────────────────────────────
+  # ── GitLeaks ────────────────────────────────────────────────
   gitleaks:
     name: GitLeaks — Secrets
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
         with:
-            fetch-depth: 0
-
+          fetch-depth: 0
 
       - name: Run GitLeaks
         continue-on-error: true
         run: |
-          docker run --rm \
-            -v "$PWD:/repo" \
-            zricethezav/gitleaks:latest \
-            detect \
-            --source /repo \
-            --no-git \
-            --report-format json \
-            --report-path /repo/gitleaks-report.json
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source /repo --no-git -v \
+            --report-format json --report-path /repo/gitleaks-report.json
 
+      - name: Verify report exists
+        if: always()
+        run: test -f gitleaks-report.json || { echo "::error::gitleaks-report.json no existe — revisá el step 'Run GitLeaks'"; exit 1; }
 
       - name: Upload to Shield Dev
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/gitleaks" \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/gitleaks" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @gitleaks-report.json
+            -H "X-Repo: ${{ github.server_url }}/${{ github.repository }}" \
+            -H "X-Environment: $ENVIRONMENT" \
+            -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
+            --data-binary @gitleaks-report.json)
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
 
-
-
-  # ───────────────────────────────────────
-  # Trivy - Docker Image
-  # ───────────────────────────────────────
+  # ── Trivy ───────────────────────────────────────────────────
   trivy:
-    name: Trivy — Container Vulnerabilities
+    name: Trivy — Vulnerabilidades
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
-
-
-      - name: Build Docker Image
-        run: |
-          docker build \
-            -t shielddev-image:${{ github.sha }} .
-
 
       - name: Run Trivy
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          scan-type: image
-          image-ref: shielddev-image:${{ github.sha }}
+          scan-type: fs
           format: json
           output: trivy-report.json
           exit-code: 0
-          ignore-unfixed: false
-          vuln-type: os,library
+          ignore-unfixed: true
 
+      - name: Verify report exists
+        if: always()
+        run: test -f trivy-report.json || { echo "::error::trivy-report.json no existe — revisá el step 'Run Trivy'"; exit 1; }
 
       - name: Upload to Shield Dev
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/trivy" \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/trivy" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @trivy-report.json
+            -H "X-Repo: ${{ github.server_url }}/${{ github.repository }}" \
+            -H "X-Environment: $ENVIRONMENT" \
+            -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
+            --data-binary @trivy-report.json)
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
 
-
-
-  # ───────────────────────────────────────
-  # OWASP Dependency Check
-  # ───────────────────────────────────────
+  # ── OWASP Dependency Check ──────────────────────────────────
   depcheck:
     name: OWASP Dependency Check
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-            npm install
-            npm install --package-lock
 
       - name: Run Dependency Check
         continue-on-error: true
@@ -144,68 +116,60 @@ jobs:
           format: JSON
           out: .
 
+      - name: Verify report exists
+        if: always()
+        run: test -f dependency-check-report.json || { echo "::error::dependency-check-report.json no existe — revisá el step 'Run Dependency Check'"; exit 1; }
 
       - name: Upload to Shield Dev
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/depcheck" \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/depcheck" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @dependency-check-report.json
+            -H "X-Repo: ${{ github.server_url }}/${{ github.repository }}" \
+            -H "X-Environment: $ENVIRONMENT" \
+            -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
+            --data-binary @dependency-check-report.json)
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
 
-
-
-  # ───────────────────────────────────────
-  # Semgrep - SAST
-  # ───────────────────────────────────────
+  # ── Semgrep ─────────────────────────────────────────────────
   semgrep:
     name: Semgrep — SAST
     runs-on: ubuntu-latest
-
     container:
       image: semgrep/semgrep
-
-
     steps:
-
       - uses: actions/checkout@v4
 
-
       - name: Run Semgrep
-        run: |
-          semgrep \
-            --config=auto \
-            --json \
-            --output=semgrep-report.json . || true
+        run: semgrep --config=auto --json --output=semgrep-report.json . || true
 
+      - name: Verify report exists
+        if: always()
+        run: test -f semgrep-report.json || { echo "::error::semgrep-report.json no existe — revisá el step 'Run Semgrep'"; exit 1; }
 
       - name: Upload to Shield Dev
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/semgrep" \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/semgrep" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @semgrep-report.json
+            -H "X-Repo: ${{ github.server_url }}/${{ github.repository }}" \
+            -H "X-Environment: $ENVIRONMENT" \
+            -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
+            --data-binary @semgrep-report.json)
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
 
-
-
-  # ───────────────────────────────────────
-  # Checkov - IaC
-  # ───────────────────────────────────────
+  # ── Checkov ─────────────────────────────────────────────────
   checkov:
     name: Checkov — IaC
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
-
 
       - name: Run Checkov
         continue-on-error: true
@@ -213,61 +177,55 @@ jobs:
         with:
           directory: .
           output_format: json
-          output_file_path: checkov-output
+          output_file_path: checkov-report.json
           soft_fail: true
 
-
-      - name: Normalize Report
+      - name: Verify report exists
         if: always()
-        run: |
-          if sudo test -f checkov-output/results_json.json; then
-            sudo mv \
-              checkov-output/results_json.json \
-              checkov-report.json
-          fi
-
+        run: test -f checkov-report.json || { echo "::error::checkov-report.json no existe — revisá el step 'Run Checkov'"; exit 1; }
 
       - name: Upload to Shield Dev
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/checkov" \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/checkov" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @checkov-report.json
+            -H "X-Repo: ${{ github.server_url }}/${{ github.repository }}" \
+            -H "X-Environment: $ENVIRONMENT" \
+            -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
+            --data-binary @checkov-report.json)
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
 
-
-
-  # ───────────────────────────────────────
-  # OWASP ZAP - DAST
-  # ───────────────────────────────────────
+  # ── OWASP ZAP ───────────────────────────────────────────────
+  # Requiere un ambiente ya desplegado y accesible desde el runner (APP_URL).
   owasp-zap:
     name: OWASP ZAP — DAST
     runs-on: ubuntu-latest
-
     steps:
-
-      - uses: actions/checkout@v4
-
-
-      - name: Run OWASP ZAP
+      - name: Run OWASP ZAP Baseline
         continue-on-error: true
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ env.APP_URL }}
           fail_action: false
-          cmd_options: "-J zap-report.json"
+          cmd_options: '-J zap-report.json'
 
+      - name: Verify report exists
+        if: always()
+        run: test -f zap-report.json || { echo "::error::zap-report.json no existe — ¿APP_URL está seteada?"; exit 1; }
 
       - name: Upload to Shield Dev
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/zap" \
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "$SHIELDDEV_URL/api/v1/import/zap" \
             -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
             -H "Content-Type: application/json" \
             -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -H "X-Branch: ${{ github.ref_name }}" \
             -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @zap-report.json
+            -H "X-Repo: ${{ github.server_url }}/${{ github.repository }}" \
+            -H "X-Environment: $ENVIRONMENT" \
+            -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
+            --data-binary @zap-report.json)
+          [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
