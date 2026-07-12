@@ -177,12 +177,17 @@ jobs:
         with:
           directory: .
           output_format: json
-          output_file_path: checkov-report.json
+          output_file_path: checkov-output
           soft_fail: true
 
-      - name: Verify report exists
+      - name: Normalize Report
         if: always()
-        run: test -f checkov-report.json || { echo "::error::checkov-report.json no existe — revisá el step 'Run Checkov'"; exit 1; }
+        run: |
+          if sudo test -f checkov-output/results_json.json; then
+            sudo mv \
+              checkov-output/results_json.json \
+              checkov-report.json
+          fi
 
       - name: Upload to Shield Dev
         run: |
@@ -197,6 +202,7 @@ jobs:
             -H "X-Public-Exposed: $PUBLIC_EXPOSED" \
             --data-binary @checkov-report.json)
           [ "$STATUS" -lt 300 ] || { echo "::error::Import falló (HTTP $STATUS)"; cat response.json; exit 1; }
+
 
   # ── OWASP ZAP ───────────────────────────────────────────────
   # Requiere un ambiente ya desplegado y accesible desde el runner (APP_URL).
