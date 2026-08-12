@@ -170,7 +170,8 @@ jobs:
       - name: Run OWASP ZAP
         continue-on-error: true
         run: |
-          docker run --rm -v "$PWD:/zap/wrk/:rw" -t zaproxy/zap-stable \
+          docker run --rm --network host -u root \
+            -v "$PWD:/zap/wrk/:rw" -t zaproxy/zap-stable \
             zap-baseline.py -t "$APP_URL" -J zap-report.json -I
 
       - name: Importar a ghascan
@@ -178,5 +179,5 @@ jobs:
           curl -sf -X POST \
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            --data-binary @report/zap-report.json \
+            --data-binary @zap-report.json \
             "$GHASCAN_URL/api/projects/${{ vars.GHASCAN_DAST_PROJECT_ID }}/targets/${{ vars.GHASCAN_DAST_TARGET_ID }}/import?format=zap"
