@@ -1,141 +1,74 @@
-# .github/workflows/security.yml
-#
-# Template reutilizable — escanea con 6 herramientas y sube cada reporte a
-# Shield Dev. Cada job es independiente: si tu proyecto no aplica a alguna
-# (ej: no hay Terraform para Checkov, o no hay ambiente desplegado para ZAP),
-# borrá ese job entero.
-#
-# Setup necesario (Settings → Secrets and variables → Actions):
-#   Secrets:   SHIELDDEV_URL, SHIELDDEV_TOKEN
-#   Variables: APP_URL (solo si usás el job de ZAP)
-#
-# Nota sobre GitLeaks: gitleaks/gitleaks-action@v2 NO tiene forma de
-# configurar la ruta/formato del reporte (no existe GITLEAKS_REPORT_PATH) y
-# por defecto produce SARIF, no el JSON nativo que espera Shield Dev — por
-# eso este job usa la CLI de Gitleaks directo por Docker en vez de la action.
-
 name: Security Scan
 
 on:
-    push:
-        branches:
-        - main
-        - dev
-        - staging
-
-    pull_request:
-
+  push:
+    branches: [main, dev, staging]
+  pull_request:
 
 env:
-    SHIELDDEV_URL: ${{ secrets.SHIELDDEV_URL }}
-    SHIELDDEV_TOKEN: ${{ secrets.SHIELDDEV_TOKEN }}
-    PROJECT_NAME: ${{ github.repository }}
-    APP_URL: ${{ secrets.APP_URL }}
-
+  GHASCAN_URL: ${{ secrets.GHASCAN_URL }}
+  GHASCAN_API_KEY: ${{ secrets.GHASCAN_API_KEY }}
+  APP_URL: ${{ secrets.APP_URL }}   # sólo lo usa el job de ZAP (DAST)
 
 jobs:
-
-  # ───────────────────────────────────────
-  # GitLeaks - Secrets
-  # ───────────────────────────────────────
   gitleaks:
     name: GitLeaks — Secrets
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
         with:
-            fetch-depth: 0
-
+          fetch-depth: 0
 
       - name: Run GitLeaks
         continue-on-error: true
         run: |
-          docker run --rm \
-            -v "$PWD:/repo" \
-            zricethezav/gitleaks:latest \
-            detect \
-            --source /repo \
-            --no-git \
-            --report-format json \
-            --report-path /repo/gitleaks-report.json
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source /repo --no-git \
+            --report-format json --report-path /repo/gitleaks-report.json
 
-
-      - name: Upload to Shield Dev
+      - name: Importar a ghascan
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/gitleaks" \
-            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            -H "X-Branch: ${{ github.ref_name }}" \
-            -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @gitleaks-report.json
+            --data-binary @gitleaks-report.json \
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=gitleaks"
 
-
-
-  # ───────────────────────────────────────
-  # Trivy - Docker Image
-  # ───────────────────────────────────────
   trivy:
-    name: Trivy — Container Vulnerabilities
+    name: Trivy — Dependencias/Imagen
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
 
-
-      - name: Build Docker Image
-        run: |
-          docker build \
-            -t shielddev-image:${{ github.sha }} .
-
+      - name: Build Docker image
+        run: docker build -t app-image:${{ github.sha }} .
 
       - name: Run Trivy
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: shielddev-image:${{ github.sha }}
+          image-ref: app-image:${{ github.sha }}
           format: json
           output: trivy-report.json
           exit-code: 0
-          ignore-unfixed: false
           vuln-type: os,library
 
-
-      - name: Upload to Shield Dev
+      - name: Importar a ghascan
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/trivy" \
-            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            -H "X-Branch: ${{ github.ref_name }}" \
-            -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @trivy-report.json
+            --data-binary @trivy-report.json \
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=trivy"
 
-
-
-  # ───────────────────────────────────────
-  # OWASP Dependency Check
-  # ───────────────────────────────────────
   depcheck:
-    name: OWASP Dependency Check
+    name: OWASP Dependency-Check
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-            npm install
-            npm install --package-lock
-
-      - name: Run Dependency Check
+      - name: Run Dependency-Check
         continue-on-error: true
         uses: dependency-check/Dependency-Check_Action@main
         with:
@@ -144,68 +77,66 @@ jobs:
           format: JSON
           out: .
 
-
-      - name: Upload to Shield Dev
+      - name: Importar a ghascan
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/depcheck" \
-            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            -H "X-Branch: ${{ github.ref_name }}" \
-            -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @dependency-check-report.json
+            --data-binary @dependency-check-report.json \
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=dependency-check"
 
-
-
-  # ───────────────────────────────────────
-  # Semgrep - SAST
-  # ───────────────────────────────────────
   semgrep:
     name: Semgrep — SAST
     runs-on: ubuntu-latest
-
     container:
       image: semgrep/semgrep
-
-
     steps:
-
       - uses: actions/checkout@v4
 
-
       - name: Run Semgrep
-        run: |
-          semgrep \
-            --config=auto \
-            --json \
-            --output=semgrep-report.json . || true
+        run: semgrep --config=auto --json --output=semgrep-report.json . || true
 
-
-      - name: Upload to Shield Dev
+      - name: Importar a ghascan
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/semgrep" \
-            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            -H "X-Branch: ${{ github.ref_name }}" \
-            -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @semgrep-report.json
+            --data-binary @semgrep-report.json \
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=semgrep"
 
+  opengrep:
+    name: Opengrep — SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Install Opengrep
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+          echo "$HOME/.opengrep/cli/latest" >> $GITHUB_PATH
 
-  # ───────────────────────────────────────
-  # Checkov - IaC
-  # ───────────────────────────────────────
+      - name: Run Opengrep
+        continue-on-error: true
+        run: |
+          opengrep scan \
+            --config auto \
+            --json \
+            --output opengrep-results.json \
+            .
+
+      - name: Importar a ghascan
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
+            -H "Content-Type: application/json" \
+            --data-binary @opengrep-results.json \
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=opengrep"
+
   checkov:
     name: Checkov — IaC
     runs-on: ubuntu-latest
-
     steps:
-
       - uses: actions/checkout@v4
-
 
       - name: Run Checkov
         continue-on-error: true
@@ -216,42 +147,22 @@ jobs:
           output_file_path: checkov-output
           soft_fail: true
 
-
-      - name: Normalize Report
+      - name: Normalizar reporte
         if: always()
-        run: |
-          if sudo test -f checkov-output/results_json.json; then
-            sudo mv \
-              checkov-output/results_json.json \
-              checkov-report.json
-          fi
+        run: mv checkov-output/results_json.json checkov-report.json || true
 
-
-      - name: Upload to Shield Dev
+      - name: Importar a ghascan
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/checkov" \
-            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            -H "X-Branch: ${{ github.ref_name }}" \
-            -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @checkov-report.json
+            --data-binary @checkov-report.json \
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=checkov"
 
-
-
-  # ───────────────────────────────────────
-  # OWASP ZAP - DAST
-  # ───────────────────────────────────────
   owasp-zap:
     name: OWASP ZAP — DAST
     runs-on: ubuntu-latest
-
     steps:
-
-      - uses: actions/checkout@v4
-
-
       - name: Run OWASP ZAP
         continue-on-error: true
         uses: zaproxy/action-baseline@v0.15.0
@@ -260,14 +171,10 @@ jobs:
           fail_action: false
           cmd_options: "-J zap-report.json"
 
-
-      - name: Upload to Shield Dev
+      - name: Importar a ghascan
         run: |
-          curl -X POST "$SHIELDDEV_URL/api/v1/import/zap" \
-            -H "Authorization: Bearer $SHIELDDEV_TOKEN" \
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
-            -H "X-Project: $PROJECT_NAME" \
-            -H "X-Repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            -H "X-Branch: ${{ github.ref_name }}" \
-            -H "X-Commit: ${{ github.sha }}" \
-            --data-binary @zap-report.json
+            --data-binary @report/zap-report.json \
+            "$GHASCAN_URL/api/projects/${{ vars.GHASCAN_DAST_PROJECT_ID }}/targets/${{ vars.GHASCAN_DAST_TARGET_ID }}/import?format=zap"
