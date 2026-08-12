@@ -32,7 +32,7 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @gitleaks-report.json \
-            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=gitleaks"
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&commit=${{ github.sha }}&format=gitleaks"
 
   trivy:
     name: Trivy — Dependencias/Imagen
@@ -60,7 +60,7 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @trivy-report.json \
-            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=trivy"
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&commit=${{ github.sha }}&format=trivy"
 
   depcheck:
     name: OWASP Dependency-Check
@@ -91,7 +91,7 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @dependency-check-report.json \
-            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=dependency-check"
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&commit=${{ github.sha }}&format=dependency-check"
 
   semgrep:
     name: Semgrep — SAST
@@ -110,7 +110,7 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @semgrep-report.json \
-            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=semgrep"
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&commit=${{ github.sha }}&format=semgrep"
 
   opengrep:
     name: Opengrep — SAST
@@ -142,7 +142,7 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @opengrep-results.json \
-            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=opengrep"
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&commit=${{ github.sha }}&format=opengrep"
 
   checkov:
     name: Checkov — IaC
@@ -173,7 +173,7 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @checkov-report.json \
-            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&format=checkov"
+            "$GHASCAN_URL/api/projects/import?repo_url=https://github.com/${{ github.repository }}&branch=${{ github.ref_name }}&commit=${{ github.sha }}&format=checkov"
 
   owasp-zap:
     name: OWASP ZAP — DAST
@@ -193,4 +193,4 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @zap-report.json \
-            "$GHASCAN_URL/api/projects/import?url=$APP_URL&format=zap"
+            "$GHASCAN_URL/api/projects/import?url=$APP_URL&commit=${{ github.sha }}&format=zap"
