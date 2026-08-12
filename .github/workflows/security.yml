@@ -112,7 +112,11 @@ jobs:
 
       - name: Install Opengrep
         run: |
-          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+          for i in 1 2 3; do
+            curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash && break
+            echo "intento $i falló, reintentando en 10s..." >&2
+            sleep 10
+          done
           echo "$HOME/.opengrep/cli/latest" >> $GITHUB_PATH
 
       - name: Run Opengrep
@@ -171,6 +175,7 @@ jobs:
         continue-on-error: true
         run: |
           docker run --rm --network host -u root \
+            -e JAVA_OPTS="-Djava.net.preferIPv4Stack=true" \
             -v "$PWD:/zap/wrk/:rw" -t zaproxy/zap-stable \
             zap-baseline.py -t "$APP_URL" -J zap-report.json -I
 
@@ -180,4 +185,4 @@ jobs:
             -H "Authorization: Bearer $GHASCAN_API_KEY" \
             -H "Content-Type: application/json" \
             --data-binary @zap-report.json \
-            "$GHASCAN_URL/api/projects/${{ vars.GHASCAN_DAST_PROJECT_ID }}/targets/${{ vars.GHASCAN_DAST_TARGET_ID }}/import?format=zap"
+            "$GHASCAN_URL/api/projects/import?url=$APP_URL&format=zap"
