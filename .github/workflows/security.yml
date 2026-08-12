@@ -68,6 +68,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Instalar dependencias Node.js (si el repo tiene package.json)
+        run: |
+          for pkg in $(find . -maxdepth 3 -name package.json -not -path "*/node_modules/*"); do
+            dir=$(dirname "$pkg")
+            echo "Instalando dependencias en $dir"
+            (cd "$dir" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)) || true
+          done
+
       - name: Run Dependency-Check
         continue-on-error: true
         uses: dependency-check/Dependency-Check_Action@main
