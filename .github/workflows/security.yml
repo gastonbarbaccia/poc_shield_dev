@@ -149,7 +149,11 @@ jobs:
 
       - name: Normalizar reporte
         if: always()
-        run: mv checkov-output/results_json.json checkov-report.json || true
+        run: |
+          if sudo test -f checkov-output/results_json.json; then
+            sudo mv checkov-output/results_json.json checkov-report.json
+            sudo chown "$USER" checkov-report.json
+          fi
 
       - name: Importar a ghascan
         run: |
@@ -165,11 +169,9 @@ jobs:
     steps:
       - name: Run OWASP ZAP
         continue-on-error: true
-        uses: zaproxy/action-baseline@v0.15.0
-        with:
-          target: ${{ env.APP_URL }}
-          fail_action: false
-          cmd_options: "-J zap-report.json"
+        run: |
+          docker run --rm -v "$PWD:/zap/wrk/:rw" -t zaproxy/zap-stable \
+            zap-baseline.py -t "$APP_URL" -J zap-report.json -I
 
       - name: Importar a ghascan
         run: |
