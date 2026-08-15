@@ -74,7 +74,6 @@ resource "aws_s3_bucket" "example" {
   bucket = "abhisheksterraform2023project"
 }
 
-
 resource "aws_instance" "webserver1" {
   ami                    = "ami-0261755bbcb8c4a84"
   instance_type          = "t2.micro"
@@ -131,13 +130,16 @@ resource "aws_lb_target_group_attachment" "attach2" {
 
 resource "aws_lb_listener" "listener" {
   load_balancer_arn = aws_lb.myalb.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = 443
+  protocol          = "HTTPS"
 
   default_action {
     target_group_arn = aws_lb_target_group.tg.arn
     type             = "forward"
   }
+
+  ssl_policy = "ELBSecurityPolicy-2016-08"
+  certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/your-certificate-id"
 }
 
 output "loadbalancerdns" {
