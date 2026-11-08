@@ -1,0 +1,63 @@
+# Shield Dev Radar: análisis de seguridad en cada push y pull request.
+# Guardar en: .github/workflows/shield-radar.yml
+# SHIELD_KEY (y NVD_API_KEY, opcional) van como secretos del repositorio: Settings → Secrets and variables → Actions.
+# Cada secreto llega solo al paso que lo usa. Las acciones van fijadas por SHA (la versión, en el comentario).
+name: Shield Dev Radar
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  seguridad:
+    runs-on: ubuntu-latest
+    env:
+      SHIELD_URL: https://shield-radar-aio.onrender.com
+      SHIELD_WORKSPACE: poc-shield
+      SHIELD_TARGET: ${{ github.repository }}
+      SHIELD_FAIL_ON: none   # critical | high | medium | low | none
+      ZAP_TARGET: https://www.gcbgroup.com.ar   # entorno que analiza ZAP (no producción)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+        with:
+          fetch-depth: 0   # Gitleaks revisa todo el historial de git
+
+      - name: Semgrep
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh semgrep/semgrep:1.182.0 -c 'semgrep scan --config auto --json --output semgrep.json || true'
+
+      - name: Gitleaks
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh zricethezav/gitleaks:v8.30.1 -c 'gitleaks detect --source . --report-format json --report-path gitleaks.json --exit-code 0'
+
+      - name: Trivy
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh aquasec/trivy:0.76.1 -c 'trivy fs --scanners vuln,secret,misconfig --format json --output trivy.json .'
+
+      - name: Checkov
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh bridgecrew/checkov:3.3.30 -c 'checkov --directory . --output json --soft-fail > checkov.json'
+
+      - name: Caché de la base del NVD (Dependency-Check)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: .dc-data
+          key: dependency-check-${{ github.run_id }}
+          restore-keys: dependency-check-
+
+      - name: Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opcional, acelera la primera descarga de la base del NVD
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e SHIELD_TARGET -e NVD_API_KEY -v "$PWD:/src" -w /src --entrypoint sh owasp/dependency-check:12.1.0 -c '/usr/share/dependency-check/bin/dependency-check.sh --scan . --exclude ".dc-data/**" --data .dc-data --format JSON --out . --project "$SHIELD_TARGET" ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"} || true'
+
+      - name: OWASP ZAP
+        run: |
+          mkdir -p zap-out && chmod 777 zap-out
+          docker run --rm -v "$PWD/zap-out:/zap/wrk:rw" zaproxy/zap-stable:2.17.0 zap-baseline.py -t "$ZAP_TARGET" -J zap-report.json -I || true
+          cp zap-out/zap-report.json . || true
+
+      - name: Enviar a Shield Dev Radar
+        env:
+          SHIELD_KEY: ${{ secrets.SHIELD_KEY }}
+        run: |
+          curl -sfL "$SHIELD_URL/downloads/shield-import.sh" -o shield-import.sh
+          echo "617b599971ee2400396f799d6184a856e516b6bf486d0b0b0c13a26ca2544cf4  shield-import.sh" | sha256sum -c -   # se detiene si el script no es el original
+          bash shield-import.sh semgrep.json gitleaks.json trivy.json checkov.json dependency-check-report.json zap-report.json
