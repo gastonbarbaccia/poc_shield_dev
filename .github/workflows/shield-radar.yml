@@ -237,4 +237,3 @@ jobs:
           printf '%s\n' "${REPORTS[@]}"
 
           bash shield-import.sh "${REPORTS[@]}"
-```
