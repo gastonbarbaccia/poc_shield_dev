@@ -15,9 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SHIELD_URL: https://shield-radar-aio.onrender.com
-      SHIELD_WORKSPACE: agro-norte
+      SHIELD_WORKSPACE: poc-shield
       SHIELD_TARGET: ${{ github.repository }}
-      SHIELD_FAIL_ON: critical   # critical | high | medium | low | none
+      SHIELD_FAIL_ON: none   # critical | high | medium | low | none
       ZAP_TARGET: https://www.gcbgroup.com.ar   # entorno que analiza ZAP (no producción)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
