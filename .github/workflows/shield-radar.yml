@@ -1,6 +1,7 @@
-# Shield Dev Radar
-# SAST + SCA + IaC + Secrets + Containers + DAST
-
+# Shield Dev Radar: análisis de seguridad en cada push y pull request.
+# Guardar en: .github/workflows/shield-radar.yml
+# SHIELD_KEY (y NVD_API_KEY, opcional) van como secretos del repositorio: Settings → Secrets and variables → Actions.
+# Cada secreto llega solo al paso que lo usa. Las acciones van fijadas por SHA (la versión, en el comentario).
 name: Shield Dev Radar
 
 on:
@@ -12,228 +13,98 @@ on:
 jobs:
   seguridad:
     runs-on: ubuntu-latest
-
     env:
       SHIELD_URL: https://shield-radar-aio.onrender.com
-      SHIELD_WORKSPACE: poc-shield
+      SHIELD_WORKSPACE: agro-norte
       SHIELD_TARGET: ${{ github.repository }}
-      SHIELD_FAIL_ON: none
-      ZAP_TARGET: https://www.gcbgroup.com.ar
-
+      SHIELD_FAIL_ON: critical   # critical | high | medium | low | none
+      ZAP_TARGET: https://www.gcbgroup.com.ar   # entorno que analiza ZAP (no producción)
     steps:
-
-      # CHECKOUT
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # Gitleaks revisa todo el historial de git
 
-      # SEMGREP - SAST
-      - name: Semgrep
+      - name: Caché de la base de Trivy
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: ${{ runner.temp }}/trivy-cache   # fuera del repositorio: no se analiza
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      # Trivy y Dependency-Check necesitan el package-lock.json. Solo se genera donde falta, sin descargar ni ejecutar nada.
+      - name: Archivos de bloqueo de npm (solo donde falten)
         run: |
-          docker run --rm \
-            -u "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD:/src" \
-            -w /src \
-            --entrypoint sh \
-            semgrep/semgrep:1.182.0 \
-            -c 'semgrep scan --config auto --json --output semgrep.json || true'
-
-      # GITLEAKS - SECRET SCANNING
-      - name: Gitleaks
-        run: |
-          docker run --rm \
-            -u "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD:/src" \
-            -w /src \
-            --entrypoint sh \
-            zricethezav/gitleaks:v8.30.1 \
-            -c 'gitleaks detect --source . --report-format json --report-path gitleaks.json --exit-code 0'
-
-      # TRIVY - DEPENDENCIES + SECRETS + IaC
-      - name: Trivy - Filesystem
-        run: |
-          docker run --rm \
-            -u "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD:/src" \
-            -w /src \
-            --entrypoint sh \
-            aquasec/trivy:0.76.1 \
-            -c 'trivy fs --scanners vuln,secret,misconfig --format json --output trivy.json . || true'
-
-
-      # DETECTAR DOCKERFILES
-      - name: Detectar Dockerfiles
-        id: dockerfiles
-        run: |
-          mkdir -p docker-reports
-
-          COUNT=$(find . \
-            -type f \
-            \( -name Dockerfile -o -name 'Dockerfile.*' \) \
-            -not -path './.git/*' \
-            | wc -l)
-
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-
-          echo "Dockerfiles encontrados: $COUNT"
-
-      # CONSTRUIR IMÁGENES
-      - name: Build - Docker Images
-        if: steps.dockerfiles.outputs.count != '0'
-        run: |
-          mkdir -p docker-reports
-
-          touch docker-images.txt
-
-          while IFS= read -r -d '' DOCKERFILE; do
-
-            RELATIVE_PATH="${DOCKERFILE#./}"
-
-            SAFE_NAME=$(echo "$RELATIVE_PATH" \
-              | tr '/:' '--' \
-              | tr '[:upper:]' '[:lower:]')
-
-            IMAGE="shielddev-radar:${SAFE_NAME}"
-
-            echo ""
-            echo "=================================="
-            echo "Construyendo: $IMAGE"
-            echo "Dockerfile: $DOCKERFILE"
-            echo "=================================="
-
-            # Contexto de build: raíz del repositorio.
-            if docker build \
-              --pull \
-              -f "$DOCKERFILE" \
-              -t "$IMAGE" \
-              .; then
-
-              echo "$IMAGE" >> docker-images.txt
-              echo "BUILD OK: $IMAGE"
-
-            else
-              echo "BUILD ERROR: $DOCKERFILE"
-              echo "$DOCKERFILE" >> docker-reports/build-errors.txt
+          find . -name package.json -not -path '*/node_modules/*' -not -path './.git/*' -not -path './.shield-reports/*' | while IFS= read -r f; do
+            d=$(dirname "$f")
+            if [ ! -f "$d/package-lock.json" ] && [ ! -f "$d/yarn.lock" ] && [ ! -f "$d/pnpm-lock.yaml" ]; then
+              echo "Generando $d/package-lock.json"
+              (cd "$d" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund) || echo "No se pudo generar en $d"
             fi
+          done
 
-          done < <(
-            find . \
-              -type f \
-              \( -name Dockerfile -o -name 'Dockerfile.*' \) \
-              -not -path './.git/*' \
-              -print0 | sort -z
-          )
+      - name: Semgrep
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh semgrep/semgrep:1.182.0 -c 'mkdir -p .shield-reports && (semgrep scan --config auto --exclude .shield-reports --exclude .dc-data --exclude .trivycache --json --output .shield-reports/semgrep.json || true)'
 
-      # CACHE TRIVY
-      - name: Cache Trivy
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/trivy-cache
-          key: trivy-db-${{ runner.os }}
-          restore-keys: |
-            trivy-db-
+      - name: Gitleaks
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh zricethezav/gitleaks:v8.30.1 -c 'mkdir -p .shield-reports && gitleaks detect --source . --report-format json --report-path .shield-reports/gitleaks.json --exit-code 0'
 
-      # ANALIZAR CADA IMAGEN CON TRIVY
-      - name: Trivy - Container Images
-        if: steps.dockerfiles.outputs.count != '0'
-        run: |
-          mkdir -p docker-reports
-          mkdir -p "$RUNNER_TEMP/trivy-cache"
+      - name: Trivy
+        run: mkdir -p "$RUNNER_TEMP/trivy-cache" && docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e TRIVY_CACHE_DIR=/cache -v "$RUNNER_TEMP/trivy-cache:/cache" -v "$PWD:/src" -w /src --entrypoint sh aquasec/trivy:0.76.1 -c 'mkdir -p .shield-reports && trivy fs --scanners vuln,secret,misconfig --skip-dirs .shield-reports --skip-dirs .dc-data --skip-dirs .trivycache --format json --output .shield-reports/trivy.json .'
 
-          if [ ! -s docker-images.txt ]; then
-            echo "No hay imágenes construidas para analizar."
-            exit 0
-          fi
-
-          while IFS= read -r IMAGE; do
-
-            [ -z "$IMAGE" ] && continue
-
-            SAFE_NAME=$(echo "$IMAGE" | tr '/:' '__')
-            REPORT="docker-reports/${SAFE_NAME}.json"
-
-            echo ""
-            echo "=================================="
-            echo "Analizando imagen: $IMAGE"
-            echo "=================================="
-
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD:/src" \
-              -v "$RUNNER_TEMP/trivy-cache:/root/.cache/" \
-              aquasec/trivy:0.76.1 \
-              image \
-                --scanners vuln,secret \
-                --format json \
-                --output "/src/$REPORT" \
-                "$IMAGE" \
-              || echo "ERROR analizando $IMAGE"
-
-          done < docker-images.txt
-
-
-      # CHECKOV - IaC
       - name: Checkov
-        run: |
-          docker run --rm \
-            -u "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -v "$PWD:/src" \
-            -w /src \
-            --entrypoint sh \
-            bridgecrew/checkov:3.3.30 \
-            -c 'checkov --directory . --output json --soft-fail > checkov.json'
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src --entrypoint sh bridgecrew/checkov:3.3.30 -c 'mkdir -p .shield-reports && checkov --directory . --skip-path .shield-reports --skip-path .dc-data --skip-path .trivycache --output json --soft-fail > .shield-reports/checkov.json'
 
-      # OWASP ZAP - DAST
+      - name: Caché de la base del NVD (Dependency-Check)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4.3.0
+        with:
+          path: .dc-data
+          key: dependency-check-${{ github.run_id }}
+          restore-keys: dependency-check-
+
+      - name: Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opcional, acelera la primera descarga de la base del NVD
+        run: docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e SHIELD_TARGET -e NVD_API_KEY -v "$PWD:/src" -w /src --entrypoint sh owasp/dependency-check:12.1.0 -c 'mkdir -p .shield-reports && /usr/share/dependency-check/bin/dependency-check.sh --scan . --exclude ".dc-data/**" --exclude ".shield-reports/**" --exclude ".trivycache/**" --data .dc-data --format JSON --out .shield-reports --project "$SHIELD_TARGET" ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"} || true'
+
+      - name: Trivy (imágenes)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          mkdir -p .shield-reports/imagenes
+          : > .shield-reports/imagenes/lista.txt
+          REPO=$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          find . -type f \( -name Dockerfile -o -name 'Dockerfile.*' \) -not -path './.git/*' -not -path './.shield-reports/*' | sort | while IFS= read -r DF; do
+            SAFE=$(printf '%s' "${DF#./}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/-/g; s/^[.-]*//' | cut -c1-120)
+            IMAGE="$REPO:$SAFE"
+            echo "=== $IMAGE ($DF)"
+            if docker build -f "$DF" -t "$IMAGE" .; then
+              docker save "$IMAGE" -o .trivyimg.tar
+              docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e TRIVY_CACHE_DIR=/cache -v "$RUNNER_TEMP/trivy-cache:/cache" -v "$PWD:/src" -w /src aquasec/trivy:0.76.1 image --scanners vuln,secret --input .trivyimg.tar --format json --output ".shield-reports/imagenes/$SAFE.json" \
+                && echo "$IMAGE $SAFE" >> .shield-reports/imagenes/lista.txt || echo "No se pudo analizar $IMAGE"
+              rm -f .trivyimg.tar
+            else
+              echo "No se pudo construir $DF: se omite"
+            fi
+          done
+
       - name: OWASP ZAP
         run: |
-          mkdir -p zap-out
-          chmod 777 zap-out
+          mkdir -p zap-out && chmod 777 zap-out
+          docker run --rm -v "$PWD/zap-out:/zap/wrk:rw" zaproxy/zap-stable:2.17.0 zap-baseline.py -t "$ZAP_TARGET" -m 3 -j -J zap-report.json -I || true
+          mkdir -p .shield-reports && cp zap-out/zap-report.json .shield-reports/ || true
 
-          docker run --rm \
-            -v "$PWD/zap-out:/zap/wrk:rw" \
-            zaproxy/zap-stable:2.17.0 \
-            zap-baseline.py \
-              -t "$ZAP_TARGET" \
-              -J zap-report.json \
-              -I || true
-
-          cp zap-out/zap-report.json . || true
-
-      # ENVIAR REPORTES A SHIELD DEV
-      - name: Enviar resultados a Shield Dev Radar
+      - name: Enviar a Shield Dev Radar
         env:
           SHIELD_KEY: ${{ secrets.SHIELD_KEY }}
         run: |
-          set -e
-
-          curl -sfL \
-            "$SHIELD_URL/downloads/shield-import.sh" \
-            -o shield-import.sh
-
-          echo "617b599971ee2400396f799d6184a856e516b6bf486d0b0b0c13a26ca2544cf4  shield-import.sh" \
-            | sha256sum -c -
-
-          chmod +x shield-import.sh
-
-          REPORTS=(
-            semgrep.json
-            gitleaks.json
-            trivy.json
-            checkov.json
-            zap-report.json
-          )
-
-          # Agregar los reportes de cada imagen construida.
-          while IFS= read -r -d '' REPORT; do
-            REPORTS+=("$REPORT")
-          done < <(find docker-reports -type f -name '*.json' -print0 | sort -z)
-
-          echo "Reportes que se enviarán:"
-          printf '%s\n' "${REPORTS[@]}"
-
-          bash shield-import.sh "${REPORTS[@]}"
+          curl -sfL "$SHIELD_URL/downloads/shield-import.sh" -o shield-import.sh
+          echo "617b599971ee2400396f799d6184a856e516b6bf486d0b0b0c13a26ca2544cf4  shield-import.sh" | sha256sum -c -   # se detiene si el script no es el original
+          bash shield-import.sh .shield-reports/semgrep.json .shield-reports/gitleaks.json .shield-reports/trivy.json .shield-reports/checkov.json .shield-reports/dependency-check-report.json .shield-reports/zap-report.json
+          # Cada imagen, con el nombre de SU imagen como destino (su propio activo)
+          if [ -s .shield-reports/imagenes/lista.txt ]; then
+            while read -r IMAGE SAFE; do
+              if [ -f ".shield-reports/imagenes/$SAFE.json" ]; then
+                SHIELD_TARGET="$IMAGE" bash shield-import.sh ".shield-reports/imagenes/$SAFE.json"
+              fi
+            done < .shield-reports/imagenes/lista.txt
+          fi
